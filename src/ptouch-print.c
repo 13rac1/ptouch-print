@@ -45,7 +45,7 @@ int print_img(ptouch_dev ptdev, gdImage *im, int chain);
 int write_png(gdImage *im, const char *file);
 gdImage *img_append(gdImage *in_1, gdImage *in_2);
 gdImage *img_cutmark(int tape_width);
-gdImage *render_text(char *font, char *line[], int lines, int tape_width);
+gdImage *render_text(char *font, char *line[], int lines, int tape_width, int max_print_width);
 void unsupported_printer(ptouch_dev ptdev);
 void usage(char *progname);
 int parse_args(int argc, char **argv);
@@ -77,6 +77,7 @@ void rasterline_setpixel(uint8_t* rasterline, size_t size, int pixel)
 int print_img(ptouch_dev ptdev, gdImage *im, int chain)
 {
 	int d,i,k,offset,tape_width;
+	size_t max_pixels;
 	uint8_t rasterline[(ptdev->devinfo->max_px)/8];
 
 	if (!im) {
@@ -84,6 +85,7 @@ int print_img(ptouch_dev ptdev, gdImage *im, int chain)
 		return -1;
 	}
 	tape_width=ptouch_get_tape_width(ptdev);
+	max_pixels=ptouch_get_max_width(ptdev);
 	/* find out whether color 0 or color 1 is darker */
 	d=(gdImageRed(im,1)+gdImageGreen(im,1)+gdImageBlue(im,1) < gdImageRed(im,0)+gdImageGreen(im,0)+gdImageBlue(im,0))?1:0;
 	if (gdImageSY(im) > tape_width) {
@@ -92,7 +94,6 @@ int print_img(ptouch_dev ptdev, gdImage *im, int chain)
 		return -1;
 	}
 	printf(_("image size (%ipx x %ipx)\n"), gdImageSX(im), gdImageSY(im));
-	size_t max_pixels=ptouch_get_max_width(ptdev);
 	offset=((int)max_pixels / 2)-(gdImageSY(im)/2);	/* always print centered */
 	printf("max_pixels=%ld, offset=%d\n", max_pixels, offset);
 	if ((ptdev->devinfo->flags & FLAG_RASTER_PACKBITS) == FLAG_RASTER_PACKBITS) {
@@ -262,25 +263,40 @@ int offset_x(char *text, char *font, int fsz)
 	return -brect[0];
 }
 
-gdImage *render_text(char *font, char *line[], int lines, int tape_width)
+/* --------------------------------------------------------------------
+	Render text with proper font scaling based on printer width capabilities.
+	The printer's max_print_width is passed to adjust font size calculations
+	relative to the standard 128px reference width used by most printers.
+	This ensures consistent font sizing across different printer models.
+   -------------------------------------------------------------------- */
+gdImage *render_text(char *font, char *line[], int lines, int tape_width, int max_print_width)
 {
 	int brect[8];
 	int i, black, x=0, tmp=0, fsz=0;
 	char *p;
 	gdImage *im=NULL;
+	// Scale factor to adjust font sizes for non-standard width printers (128px is the reference width)
+	float scale_factor = (float)max_print_width / 128.0;
 
 	if (debug) {
-		printf(_("render_text(): %i lines, font = '%s'\n"), lines, font);
+		printf(_("render_text(): %i lines, font = '%s', scale factor = %.2f\n"), lines, font, scale_factor);
 	}
 	if (gdFTUseFontConfig(1) != GD_TRUE) {
 		printf(_("warning: font config not available\n"));
 	}
 	if (fontsize > 0) {
-		fsz=fontsize;
+		fsz = fontsize;
 		printf(_("setting font size=%i\n"), fsz);
 	} else {
 		for (i=0; i<lines; ++i) {
-			if ((tmp=find_fontsize(tape_width/lines, font, line[i])) < 0) {
+			// Scale the target font size based on the proportional tape width
+			// and printer capability compared to the standard 128px reference
+			int target_size = (int)((tape_width/lines) * scale_factor);
+			if (debug) {
+				printf(_("debug: font size target for line %i = %i\n"), i+1, target_size);
+			}
+			
+			if ((tmp=find_fontsize(target_size, font, line[i])) < 0) {
 				printf(_("could not estimate needed font size\n"));
 				return NULL;
 			}
@@ -613,7 +629,8 @@ int main(int argc, char *argv[])
 				line[lines]=argv[i];
 			}
 			if (lines) {
-				if ((im=render_text(font_file, line, lines, tape_width)) == NULL) {
+				int max_print_width = forced_tape_width ? forced_tape_width : ptouch_get_max_width(ptdev);
+				if ((im=render_text(font_file, line, lines, tape_width, max_print_width)) == NULL) {
 					printf(_("could not render text\n"));
 					return 1;
 				}
