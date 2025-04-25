@@ -67,7 +67,7 @@ void rasterline_setpixel(uint8_t* rasterline, size_t size, int pixel)
 {
 //	TODO: pixel should be unsigned, since we can't have negative
 //	if (pixel > ptdev->devinfo->device_max_px) {
-	if (pixel > (int)(size*8)) {
+	if (pixel < 0 || pixel >= (int)(size*8)) {
 		return;
 	}
 	rasterline[(size-1)-(pixel/8)] |= (uint8_t)(1<<(pixel%8));
@@ -91,7 +91,7 @@ int print_img(ptouch_dev ptdev, gdImage *im, int chain)
 		printf(_("maximum printing width for this tape is %ipx\n"), tape_width);
 		return -1;
 	}
-	//offset=64-(gdImageSY(im)/2);	/* always print centered */
+	printf(_("image size (%ipx x %ipx)\n"), gdImageSX(im), gdImageSY(im));
 	size_t max_pixels=ptouch_get_max_width(ptdev);
 	offset=((int)max_pixels / 2)-(gdImageSY(im)/2);	/* always print centered */
 	printf("max_pixels=%ld, offset=%d\n", max_pixels, offset);
@@ -136,7 +136,7 @@ int print_img(ptouch_dev ptdev, gdImage *im, int chain)
 				rasterline_setpixel(rasterline, sizeof(rasterline), offset+i);
 			}
 		}
-		if (ptouch_sendraster(ptdev, rasterline, 16) != 0) {
+		if (ptouch_sendraster(ptdev, rasterline, (ptdev->devinfo->max_px / 8)) != 0) {
 			printf(_("ptouch_sendraster() failed\n"));
 			return -1;
 		}
